@@ -176,6 +176,7 @@ class MycroftSkill(object):
         self.bind(emitter)
         self.config_core = ConfigurationManager.get()
         self.config = self.config_core.get(name)
+        self.config_apis = self.config_core.get("APIS")
         self.dialog_renderer = None
         self.file_system = FileSystemAccess(join('skills', name))
         self.registered_intents = []
