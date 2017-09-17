@@ -28,12 +28,11 @@ from requests.exceptions import ConnectionError
 import mycroft.dialog
 from mycroft.client.speech.mic import MutableMicrophone, ResponsiveRecognizer
 from mycroft.configuration import ConfigurationManager
-from mycroft.messagebus.message import Message
 from mycroft.metrics import MetricsAggregator
 from mycroft.session import SessionManager
 from mycroft.stt import STTFactory
 from mycroft.util.log import getLogger
-from mycroft.client.speech.hot_word_factory import HotWordFactory
+from mycroft.client.speech.hotword_factory import HotWordFactory
 
 LOG = getLogger(__name__)
 
@@ -105,23 +104,6 @@ class AudioConsumer(Thread):
         self.config = ConfigurationManager.get()
         self.word = self.wakeword_recognizer.key_phrase
         self.emitter.on("recognizer_loop:hotword", self.set_word)
-        self.emitter.on("recognizer_loop:external_audio",
-                    self.handle_external_audio_request)
-
-    def read_wave_file(self, wave_file_path):
-        # use the audio file as the audio source
-        r = sr.Recognizer()
-        with sr.AudioFile(wave_file_path) as source:
-            audio = r.record(source)
-        return audio
-
-    def handle_external_audio_request(self, event):
-        wave_file = event.get("wave_file")
-        audio = self.read_wave_file(wave_file)
-        if audio is not None:
-            text = self.transcribe(audio, False)
-            self.emitter.emit("recognizer_loop:external_audio.reply",
-                               {"stt": text})
 
     def set_word(self, event):
         self.word = event.get("hotword", self.wakeword_recognizer.key_phrase)
@@ -214,7 +196,7 @@ class AudioConsumer(Thread):
             'utterance': utterance,
             'session': SessionManager.get().session_id
         }
-        self.emitter.emit("speak", Message("speak", payload))
+        self.emitter.emit("speak", payload)
 
 
 class RecognizerLoopState(object):
@@ -228,8 +210,10 @@ class RecognizerLoop(EventEmitter):
         EventEmitter loop running speech recognition. Local wake word
         recognizer and remote general speech recognition.
     """
+
     def __init__(self):
         super(RecognizerLoop, self).__init__()
+        self.mute_calls = 0
         self._load_config()
 
     def _load_config(self):
@@ -244,15 +228,17 @@ class RecognizerLoop(EventEmitter):
         rate = self.config.get('sample_rate')
         device_index = self.config.get('device_index')
 
-        self.microphone = MutableMicrophone(device_index, rate)
+        self.microphone = MutableMicrophone(device_index, rate,
+                                            mute=self.mute_calls > 0)
         # FIXME - channels are not been used
         self.microphone.CHANNELS = self.config.get('channels')
         self.wakeword_recognizer = self.create_wake_word_recognizer()
         # TODO - localization
+        self.wakeup_recognizer = self.create_wakeup_recognizer()
+        self.responsive_recognizer = ResponsiveRecognizer(
+            self.wakeword_recognizer)
         self.hot_word_engines = {}
         self.create_hot_word_engines()
-        self.wakeup_recognizer = self.create_wakeup_recognizer()
-        self.responsive_recognizer = ResponsiveRecognizer(self.wakeword_recognizer, self.hot_word_engines)
         self.state = RecognizerLoopState()
 
     def create_hot_word_engines(self):
@@ -260,24 +246,30 @@ class RecognizerLoop(EventEmitter):
         hot_words = self.config_core.get("hot_words", {})
         for word in hot_words:
             data = hot_words[word]
+            if word == self.wakeup_recognizer.key_phrase or word == \
+                    self.wakeword_recognizer.key_phrase:
+                continue
             if not data.get("active", True):
                 continue
             type = data["module"]
             ding = data.get("sound")
             utterance = data.get("utterance")
             listen = data.get("listen", False)
-            engine = HotWordFactory.create_hotword(word)
+            engine = HotWordFactory.create_hotword(word, lang=self.lang)
             self.hot_word_engines[word] = [engine, ding, utterance,
                                            listen, type]
 
     def create_wake_word_recognizer(self):
         # Create a local recognizer to hear the wakeup word, e.g. 'Hey Mycroft'
         LOG.info("creating wake word engine")
-        return HotWordFactory.create_wake_word()
+        word = self.config.get("wake_word", "hey mycroft")
+        config = None
+        return HotWordFactory.create_hotword(word, config, self.lang)
 
     def create_wakeup_recognizer(self):
         LOG.info("creating stand up word engine")
-        return HotWordFactory.create_standup_word()
+        word = self.config.get("stand_up_word", "wake up")
+        return HotWordFactory.create_hotword(word, lang=self.lang)
 
     def start_async(self):
         """
@@ -304,12 +296,31 @@ class RecognizerLoop(EventEmitter):
         self.consumer.join()
 
     def mute(self):
+        """
+            Mute microphone and increase number of requests to mute
+        """
+        self.mute_calls += 1
         if self.microphone:
             self.microphone.mute()
 
     def unmute(self):
-        if self.microphone:
+        """
+            Unmute mic if as many unmute calls as mute calls have been
+            received.
+        """
+        if self.mute_calls > 0:
+            self.mute_calls -= 1
+
+        if self.mute_calls <= 0 and self.microphone:
             self.microphone.unmute()
+            self.mute_calls = 0
+
+    def force_unmute(self):
+        """
+            Completely unmute mic dispite the number of calls to mute
+        """
+        self.mute_calls = 0
+        self.unmute()
 
     def is_muted(self):
         if self.microphone:

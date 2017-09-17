@@ -27,12 +27,16 @@ class ResponderBackend(object):
         """
            initialize emitter, register events, initialize internal variables
         """
-        self.name = name or self.__class__.__name__
+        if name is None:
+            self.name = "ResponderBackend"
+        else:
+            self.name = name
         if emitter is None:
             self.emitter = WebsocketClient()
+
             def connect():
                 self.emitter.run_forever()
-            ws_thread = Thread(connect)
+            ws_thread = Thread(target=connect)
             ws_thread.setDaemon(True)
             ws_thread.start()
         else:
@@ -114,14 +118,15 @@ class ResponderBackend(object):
         # if the message came from server send it a response
         if "server" in source and self.server:
             self.server_responder.respond(message)
+            return
         # if this message came from a client sent it a response
         # filter chat (fbchat or webchat)
-        elif ":" in destinatary and "chat" not in destinatary and self.client:
+        if ":" in destinatary and "chat" not in destinatary and self.client:
             if destinatary.split(":")[1].isdigit():
                 self.client_responder.respond(message)  # probably a socket
+                return
         # respond internally
-        else:
-            self.responder.respond(message)
+        self.responder.respond(message)
 
     def _get_client_responder(self, message_data, message_context,
                               cipher="aes"):
@@ -205,12 +210,17 @@ class QueryBackend(object):
         """
            initialize emitter, register events, initialize internal variables
         """
-        self.name = name or self.__class__.__name__
+        if name is None:
+            self.name = "QueryBackend"
+        else:
+            self.name = name
         if emitter is None:
             self.emitter = WebsocketClient()
+
             def connect():
                 self.emitter.run_forever()
-            ws_thread = Thread(connect)
+
+            ws_thread = Thread(target=connect)
             ws_thread.setDaemon(True)
             ws_thread.start()
         else:
@@ -235,6 +245,7 @@ class QueryBackend(object):
             client = self.config.get("ask_client")
             if client is not None:
                 self.client = client
+        self.result = {}
 
     def send_request(self, message_type, message_data=None,
                      message_context=None, response_messages=None,
@@ -247,7 +258,6 @@ class QueryBackend(object):
         """
         if response_messages is None:
             response_messages = []
-
         # generate reply messages
         self.waiting_messages = response_messages
         if ".request" in message_type:

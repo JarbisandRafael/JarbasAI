@@ -14,72 +14,99 @@ def url_to_pic(url):
     return saved_url
 
 
+class ServerFallbackQuery(QueryBackend):
+    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+                 server=False, client=False, override=True):
+        super(ServerFallbackQuery, self).__init__(name=name, emitter=emitter,
+                                                  timeout=timeout,
+                                                  logger=logger,
+                                                  server=server,
+                                                  client=client,
+                                                  override=override)
+
+    def wait_server_response(self, data=None, context=None):
+        if data is None:
+            data = {}
+        if context is None:
+            context = {}
+        self.query = None
+        result = self.send_request(message_type="server.intent_failure",
+                                 message_data=data,
+                                 message_context=context,
+                                 response_messages=[
+                                     "server.message.received"])
+        if self.query.get_response_type() == "server.message.received":
+            return True
+        return False
+
+
 class PadatiousFallbackQuery(QueryBackend):
     def __init__(self, name=None, emitter=None, timeout=35, logger=None,
                  server=False, client=False, override=True):
-        super(PadatiousFallbackQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+        super(PadatiousFallbackQuery, self).__init__(name=name,
+                                                     emitter=emitter,
+                                                     timeout=timeout,
+                                                     logger=logger,
+                                                     server=server,
+                                                     client=client,
+                                                     override=override)
 
     def get_padatious_response(self, data=None, context=None):
         if data is None:
             data = {}
         result = self.send_request(message_type="padatious:fallback.request",
-                          message_data=data, message_context=context)
+                                   message_data=data, message_context=context)
         return result.get("success", False)
 
 
 class RBMQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=100, logger=None,
                  server=False, client=False, override=True):
         super(RBMQuery, self).__init__(name=name, emitter=emitter,
                                        timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
+                                       logger=logger,
+                                       server=server, client=client,
                                        override=override)
 
     def sample(self, model="random", sample_num=3, context=None):
         result = self.send_request("RBM.request",
-                                 {"model": model, "sample_num":sample_num},
-                                 message_context=context)
+                                   {"model": model, "sample_num": sample_num},
+                                   message_context=context)
         result = result.get("samples")
         return result
 
 
 class ColorizationQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=60 * 15, logger=None,
                  server=False, client=False, override=True):
         super(ColorizationQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
+                                                timeout=timeout,
                                                 logger=logger,
                                                 server=server, client=client,
-                                       override=override)
+                                                override=override)
 
     def colorize(self, picture_path, context=None):
         result = self.send_request("colorization.request",
-                                 {"picture_path": picture_path},
-                                 message_context=context)
-        result = result.get("file")
+                                   {"picture_path": picture_path},
+                                   message_context=context)
         return result
 
     def colorize_from_url(self, picture_url, context=None):
         picture_path = url_to_pic(picture_url)
         result = self.send_request("colorization.request",
-                          {"picture_path": picture_path},
-                          message_context=context)
+                                   {"picture_path": picture_path},
+                                   message_context=context)
         return result
 
 
 class PornDetectQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=300, logger=None,
                  server=False, client=False, override=True):
         super(PornDetectQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+                                              timeout=timeout,
+                                              logger=logger,
+                                              server=server, client=client,
+                                              override=override)
 
     def is_porn(self, picture_path, context=None):
         return self.send_request("porn.recognition.request",
@@ -97,10 +124,10 @@ class LILACSstorageQuery(QueryBackend):
     def __init__(self, name=None, emitter=None, timeout=35, logger=None,
                  server=False, client=False, override=True):
         super(LILACSstorageQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+                                                 timeout=timeout,
+                                                 logger=logger,
+                                                 server=server, client=client,
+                                                 override=override)
 
     def save(self, node_dict):
         result = self.send_request("LILACS.node.json.save.request",
@@ -128,13 +155,13 @@ class LILACSstorageQuery(QueryBackend):
 
 
 class KnowledgeQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=120, logger=None,
                  server=False, client=False, override=True):
         super(KnowledgeQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+                                             timeout=timeout,
+                                             logger=logger,
+                                             server=server, client=client,
+                                             override=override)
 
     def adquire(self, subject, where="wolfram"):
         if "wikipedia" in where:
@@ -157,34 +184,38 @@ class KnowledgeQuery(QueryBackend):
                                                            subject})
 
     def ask_wikidata(self, subject):
-        return self.send_request("wikidata.request", {"TargetKeyword": subject})
+        return self.send_request("wikidata.request",
+                                 {"TargetKeyword": subject})
 
     def ask_dbpedia(self, subject):
-        return self.send_request("dbpedia.request", {"TargetKeywordt": subject})
+        return self.send_request("dbpedia.request",
+                                 {"TargetKeywordt": subject})
 
     def ask_wolfram(self, subject):
         return self.send_request("wolframalpha.request", {"TargetKeyword":
                                                               subject})
 
     def ask_wikihow(self, subject):
-        return self.send_request("wikihow.request", {"TargetKeyword": subject})
+        return self.send_request("wikihow.request",
+                                 {"TargetKeyword": subject})
 
     def ask_conceptnet(self, subject):
         return self.send_request("conceptnet.request", {"TargetKeyword":
                                                             subject})
 
     def ask_wordnik(self, subject):
-        return self.send_request("wordnik.request", {"TargetKeyword": subject})
+        return self.send_request("wordnik.request",
+                                 {"TargetKeyword": subject})
 
 
 class UserManagerQuery(QueryBackend):
     def __init__(self, name=None, emitter=None, timeout=35, logger=None,
                  server=False, client=False, override=True):
         super(UserManagerQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+                                               timeout=timeout,
+                                               logger=logger,
+                                               server=server, client=client,
+                                               override=override)
 
     def user_from_sock(self, sock_num):
         return self.send_request(message_type="user.from_sock.request",
@@ -204,13 +235,14 @@ class UserManagerQuery(QueryBackend):
 
 
 class FaceRecognitionQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=60 * 15, logger=None,
                  server=False, client=False, override=True):
         super(FaceRecognitionQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+                                                   timeout=timeout,
+                                                   logger=logger,
+                                                   server=server,
+                                                   client=client,
+                                                   override=override)
 
     def face_recognition_from_file(self, picture_path, context=None):
         result = self.send_request(message_type="face.recognition.request",
@@ -226,18 +258,21 @@ class FaceRecognitionQuery(QueryBackend):
 
 
 class ImageRecognitionQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=60 * 15, logger=None,
                  server=False, client=False, override=True):
-        super(ImageRecognitionQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+        super(ImageRecognitionQuery, self).__init__(name=name,
+                                                    emitter=emitter,
+                                                    timeout=timeout,
+                                                    logger=logger,
+                                                    server=server,
+                                                    client=client,
+                                                    override=override)
 
     def get_classification(self, file_path, context=None):
-        result = self.send_request(message_type="image.classification.request",
-                                   message_data={"file": file_path},
-                                   message_context=context)
+        result = self.send_request(
+            message_type="image.classification.request",
+            message_data={"file": file_path},
+            message_context=context)
         return result.get("classification", [])
 
 
@@ -245,10 +280,10 @@ class WebcamQuery(QueryBackend):
     def __init__(self, name=None, emitter=None, timeout=35, logger=None,
                  server=False, client=False, override=True):
         super(WebcamQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+                                          timeout=timeout,
+                                          logger=logger,
+                                          server=server, client=client,
+                                          override=override)
 
     def get_feed(self, context=None, server=False):
         result = self.send_request("vision.feed.request", {}, context)
@@ -265,13 +300,15 @@ class WebcamQuery(QueryBackend):
 
 
 class ObjectRecognitionQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=60 * 15, logger=None,
                  server=False, client=False, override=True):
-        super(ObjectRecognitionQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+        super(ObjectRecognitionQuery, self).__init__(name=name,
+                                                     emitter=emitter,
+                                                     timeout=timeout,
+                                                     logger=logger,
+                                                     server=server,
+                                                     client=client,
+                                                     override=override)
 
     def recognize_objects(self, picture_path, context=None):
         return self.send_request("object.recognition.request", {"file":
@@ -285,15 +322,16 @@ class ObjectRecognitionQuery(QueryBackend):
 
 
 class DeepDreamQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=60 * 15, logger=None,
                  server=False, client=False, override=True):
         super(DeepDreamQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+                                             timeout=timeout,
+                                             logger=logger,
+                                             server=server, client=client,
+                                             override=override)
 
-    def dream_from_file(self, picture_path, name=None, iter=20, categorie=None,
+    def dream_from_file(self, picture_path, name=None, iter=20,
+                        categorie=None,
                         context=None):
         if name is None:
             name = asctime().replace(" ", "_")
@@ -311,7 +349,8 @@ class DeepDreamQuery(QueryBackend):
             name = asctime().replace(" ", "_")
         result = self.send_request(message_type="deep.dream.request",
                                    message_data={
-                                       "dream_source": url_to_pic(picture_url),
+                                       "dream_source": url_to_pic(
+                                           picture_url),
                                        "dream_name": name, "num_iter": iter,
                                        "categorie": categorie},
                                    message_context=context)
@@ -319,13 +358,14 @@ class DeepDreamQuery(QueryBackend):
 
 
 class StyleTransferQuery(QueryBackend):
-    def __init__(self, name=None, emitter=None, timeout=35, logger=None,
+    def __init__(self, name=None, emitter=None, timeout=60 * 60 * 3,
+                 logger=None,
                  server=False, client=False, override=True):
         super(StyleTransferQuery, self).__init__(name=name, emitter=emitter,
-                                       timeout=timeout,
-                                                logger=logger,
-                                                server=server, client=client,
-                                       override=override)
+                                                 timeout=timeout,
+                                                 logger=logger,
+                                                 server=server, client=client,
+                                                 override=override)
 
     def transfer_from_file(self, picture_path, styles_path, name=None,
                            iter=350, context=None):

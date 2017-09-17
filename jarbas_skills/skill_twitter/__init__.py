@@ -38,40 +38,11 @@ __author__ = 'btotharye'
 # statements will show up in the command line when running Mycroft.
 LOGGER = getLogger(__name__)
 
+# disable the damn logs
+import logging
 
-class TwitterClient():
-    def __init__(self, emitter):
-        self.emitter = emitter
-        self.emitter.on("twitter_post", self.end_wait)
-        self.waiting = False
-        self.waiting_for = "tweet_post"
-
-    def end_wait(self, message):
-        if self.waiting and message.type == self.waiting_for:
-            self.waiting = False
-
-    def wait(self, time_out=15):
-        elapsed = 0
-        start = time.time()
-        while self.waiting and elapsed <= time_out:
-            time.sleep(0.3)
-            elapsed = time.time() - start
-        return self.waiting
-
-    def post_to_twitter(self, text, pic=None):
-        # get tweet type
-        if pic is not None:
-            if "http" in pic:
-                tweet_type = "remote_image"
-            else:
-                tweet_type = "image"
-        else:
-            tweet_type = "text"
-        # send tweet
-        self.emitter.emit(Message("tweet_request", {"tweet_pic": pic, "tweet_text": text, "tweet_type": tweet_type}))
-        self.waiting_for = "tweet_post"
-        self.waiting = True
-        return self.wait()
+logging.getLogger("requests_oauthlib.oauth1_auth").setLevel(logging.WARNING)
+logging.getLogger("oauthlib.oauth1.rfc5849").setLevel(logging.WARNING)
 
 
 class TwitterAPI(object):
@@ -137,12 +108,7 @@ class TwitterSkill(MycroftSkill):
         self.register_intent(post_btc_tweet_intent, self.handle_tweet_btc)
 
         # external tweet requests"
-        self.emitter.on("tweet_request", self.handle_tweet_request)
-        # automatic tweets
-        self.emitter.on("class_visualization_result", self.handle_tweet_deepdraw)
-        self.emitter.on("deep_dream_result", self.handle_tweet_dream)
-        self.emitter.on("style_transfer_result", self.handle_tweet_style_transfer)
-        self.emitter.on("inspirobot_result", self.handle_tweet_inspirobot)
+        self.emitter.on("tweet.request", self.handle_tweet_request)
 
     # The "handle_xxxx_intent" functions define Mycroft's behavior when
     # each of the skill's intents is triggered: in this case, he simply
@@ -272,123 +238,6 @@ class TwitterSkill(MycroftSkill):
         else:
             self.log.error("Unable to download image")
         return False
-
-    def handle_tweet_dream(self, message):
-        tweet_pic_file = message.data.get("file")
-        tweet_pic_url = message.data.get("dream_url")
-        layer = message.data.get("layer")
-        possible_tweets = [
-            "Deep Dreaming is awesome",
-            "AI can dream",
-            "Am i the first dreaming artificial pet ever?",
-            "Everyone dreams",
-            "I dream therefore I am ",
-            "Am i dreaming? "]
-
-        tweet_text = random.choice(possible_tweets) + " #DeepDream"
-        if layer is not None:
-            tweet_text += " #"+str(layer)
-        if "#JarbasAI" not in tweet_text:
-            tweet_text += " #JarbasAI"
-        if "#MycroftAI" not in tweet_text:
-            tweet_text += " #MycroftAI"
-
-        tweet_type = "text"
-        if tweet_pic_url:
-            self.tweet_image_from_url(tweet_pic_url, tweet_text)
-            tweet_type = "remote_image"
-        elif tweet_pic_file:
-            self.twitter.api.update_with_media(tweet_pic_file, status=tweet_text)
-            tweet_type = "image"
-        else:
-            self.log.error("Tweet Failed")
-            return
-        self.speak("Successfully posted dream to twitter.  What I posted is: {}".format(tweet_text))
-        self.emitter.emit(Message("twitter_post", {"post": tweet_text, "post_type": tweet_type}))
-
-    def handle_tweet_deepdraw(self, message):
-        tweet_pic_file = message.data.get("file")
-        tweet_pic_url = message.data.get("url")
-
-        possible_tweets = [
-            "Deep Draw is awesome",
-            "AI can draw",
-            "Am i the first deep drawing artificial pet ever?",
-            "Everyone draws",
-            "I draw therefore I am"]
-
-        tweet_text = random.choice(possible_tweets) + " #DeepDraw"
-        if "#JarbasAI" not in tweet_text:
-            tweet_text += " #JarbasAI"
-        if "#MycroftAI" not in tweet_text:
-            tweet_text += " #MycroftAI"
-        tweet_type = "text"
-        if tweet_pic_url:
-            self.tweet_image_from_url(tweet_pic_url, tweet_text)
-            tweet_type = "remote_image"
-        elif tweet_pic_file:
-            self.twitter.api.update_with_media(tweet_pic_file, status=tweet_text)
-            tweet_type = "image"
-        else:
-            self.log.error("Tweet Failed")
-            return
-        self.speak("Successfully posted deep draw to twitter.  What I posted is: {}".format(tweet_text))
-        self.emitter.emit(Message("twitter_post", {"post": tweet_text, "post_type": tweet_type}))
-
-    def handle_tweet_style_transfer(self, message):
-        tweet_pic_file = message.data.get("file")
-        tweet_pic_url = message.data.get("url")
-
-        possible_tweets = [
-            "I can copy any painter",
-            "AI can paint with the style of anyone",
-            "Ever wondered how it would look like if {{ favorite_painter }} painted something?"]
-
-        tweet_text = random.choice(possible_tweets) + " #StyleTransfer"
-        if "#JarbasAI" not in tweet_text:
-            tweet_text += " #JarbasAI"
-        if "#MycroftAI" not in tweet_text:
-            tweet_text += " #MycroftAI"
-        tweet_type = "text"
-        if tweet_pic_url:
-            self.tweet_image_from_url(tweet_pic_url, tweet_text)
-            tweet_type = "remote_image"
-        elif tweet_pic_file:
-            self.twitter.api.update_with_media(tweet_pic_file, status=tweet_text)
-            tweet_type = "image"
-        else:
-            self.log.error("Tweet Failed")
-            return
-        self.speak("Successfully posted style transfer to twitter.  What I posted is: {}".format(tweet_text))
-        self.emitter.emit(Message("twitter_post", {"post": tweet_text, "post_type": tweet_type}))
-
-    def handle_tweet_inspirobot(self, message):
-        tweet_pic_file = message.data.get("file")
-        tweet_pic_url = message.data.get("url")
-
-        possible_tweets = [
-            "Inspirobot is my friend",
-            "Do you know inspirobot?",
-            "Have you heard off inspirobot?",
-            "AI can make infinite inspirational quotes"]
-
-        tweet_text = random.choice(possible_tweets) + " #Inspirobot"
-        if "#JarbasAI" not in tweet_text:
-            tweet_text += " #JarbasAI"
-        if "#MycroftAI" not in tweet_text:
-            tweet_text += " #MycroftAI"
-        tweet_type = "text"
-        if tweet_pic_url:
-            self.tweet_image_from_url(tweet_pic_url, tweet_text)
-            tweet_type = "remote_image"
-        elif tweet_pic_file:
-            self.twitter.api.update_with_media(tweet_pic_file, status=tweet_text)
-            tweet_type = "image"
-        else:
-            self.log.error("Tweet Failed")
-            return
-        self.emitter.emit(Message("twitter_post", {"post": tweet_text, "post_type": tweet_type}))
-        self.speak("Successfully posted inspirobot to twitter.  What I posted is: {}".format(tweet_text))
 
     # The "stop" method defines what Mycroft does when told to stop during
     # the skill's execution. In this case, since the skill's functionality

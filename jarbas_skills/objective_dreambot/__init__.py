@@ -30,7 +30,7 @@ __author__ = 'jarbas'
 class DreamBotSkill(MycroftSkill):
     def __init__(self):
         super(DreamBotSkill, self).__init__()
-        self.time = 60 * 3 # minutes
+        self.time = 60 * 1  # 1 minute
         self.reload_skill = False
         self.external_reload = False
         self.external_shutdown = False
@@ -38,7 +38,7 @@ class DreamBotSkill(MycroftSkill):
 
     def initialize(self):
         # start dreamer
-        self.dreamer = DeepDreamQuery(self.emitter)
+        self.dreamer = DeepDreamQuery(self.name, self.emitter)
         # register intents
         intent = IntentBuilder("DreamBotIntent").require("DreamBotKeyword") \
             .optionally("url").build()
@@ -84,12 +84,12 @@ class DreamBotSkill(MycroftSkill):
         intent, self.handle_dreambot_objective = my_objective.build()
         self.register_intent(intent, self.handle_dreambot_objective)
 
-        my_objective.add_timer(self.time*60)
+        my_objective.add_timer(self.time * 60)  # hours
 
     def handle_dream_intent(self, message):
         self.speak("dreambot activated")
         url = message.data.get("url", "https://unsplash.it/600/?random")
-        file = self.dreamer.dream_from_url(picture_url=url, server=True)
+        file = self.dreamer.dream_from_url(picture_url=url)
         result_dict = self.dreamer.result
         return result_dict
 
@@ -108,7 +108,8 @@ class DreamBotSkill(MycroftSkill):
     def handle_pure_dream_intent(self, message):
         self.speak("dreaming on my own art")
         pictures = psy_art(path=dirname(__file__), name="dream_seed", numPics=3)
-        file = self.dreamer.dream_from_file(picture_path=random.choice(pictures), server=True)
+        file = self.dreamer.dream_from_file(
+            picture_path=random.choice(pictures))
         result_dict = self.dreamer.result
         return result_dict
 

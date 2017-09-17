@@ -26,7 +26,7 @@ import time
 from os.path import join, dirname, splitext, isdir
 
 from os.path import join, abspath, dirname, splitext, isdir, \
-                    basename, exists
+    basename, exists
 from os import listdir
 from functools import wraps
 
@@ -41,6 +41,8 @@ from mycroft.util.log import getLogger
 from mycroft.skills.settings import SkillSettings
 from mycroft import MYCROFT_ROOT_PATH
 
+from inspect import getargspec
+
 __author__ = 'seanfitz'
 
 skills_config = ConfigurationManager.instance().get("skills")
@@ -49,10 +51,6 @@ if config_dir == "default":
     SKILLS_DIR = join(MYCROFT_ROOT_PATH, "jarbas_skills")
 else:
     SKILLS_DIR = config_dir
-
-
-BLACKLISTED_SKILLS = skills_config.get("blacklisted_skills", {})
-
 
 MainModule = '__init__'
 
@@ -124,7 +122,7 @@ def open_intent_envelope(message):
                   intent_dict.get('optional'))
 
 
-def load_skill(skill_descriptor, emitter, skill_id):
+def load_skill(skill_descriptor, emitter, skill_id, BLACKLISTED_SKILLS=None):
     """
         load skill from skill descriptor.
 
@@ -133,7 +131,7 @@ def load_skill(skill_descriptor, emitter, skill_id):
             emitter:          messagebus emitter
             skill_id:         id number for skill
     """
-
+    BLACKLISTED_SKILLS = BLACKLISTED_SKILLS or []
     try:
         logger.info("ATTEMPTING TO LOAD SKILL: " + skill_descriptor["name"] +
                     " with ID " + str(skill_id))
@@ -154,7 +152,9 @@ def load_skill(skill_descriptor, emitter, skill_id):
             skill.load_data_files(dirname(skill_descriptor['info'][1]))
             # Set up intent handlers
             skill.initialize()
-            logger.info("Loaded " + skill_descriptor["name"] + " with ID " + str(skill_id))
+            logger.info(
+                "Loaded " + skill_descriptor["name"] + " with ID " + str(
+                    skill_id))
             skill._register_decorated()
             return skill
         else:
@@ -163,7 +163,8 @@ def load_skill(skill_descriptor, emitter, skill_id):
                     skill_descriptor["name"]))
     except:
         logger.error(
-            "Failed to load skill: " + skill_descriptor["name"], exc_info=True)
+            "Failed to load skill: " + skill_descriptor["name"],
+            exc_info=True)
     return None
 
 
@@ -195,20 +196,25 @@ def create_skill_descriptor(skill_folder):
     return {"name": basename(skill_folder), "info": info}
 
 
-def load_skills(emitter, skills_root=SKILLS_DIR):
-    logger.info("Checking " + skills_root + " for new skills")
-    skill_list = []
-    for skill in get_skills(skills_root):
-        skill_list.append(load_skill(skill, emitter))
+def get_handler_name(handler):
+    """
+        Return name (including class if available) of handler
+        function.
 
-    return skill_list
+        Args:
+            handler (function): Function to be named
+
+        Returns: handler name as string
+    """
+    name = ''
+    if '__self__' in dir(handler) and \
+            'name' in dir(handler.__self__):
+        name += handler.__self__.name + '.'
+    name += handler.__name__
+    return name
 
 
-def unload_skills(skills):
-    for s in skills:
-        s.shutdown()
-
-
+# Lists used when adding skill handlers using decorators
 _intent_list = []
 _intent_file_list = []
 
@@ -229,12 +235,15 @@ def intent_handler(intent_parser):
 
 def intent_file_handler(intent_file):
     """ Decorator for adding a method as an intent file handler. """
+
     def real_decorator(func):
         @wraps(func)
         def handler_method(*args, **kwargs):
             return func(*args, **kwargs)
+
         _intent_file_list.append((intent_file, func))
         return handler_method
+
     return real_decorator
 
 
@@ -263,6 +272,7 @@ class MycroftSkill(object):
         self.external_shutdown = True
         self.events = []
         self.skill_id = 0
+        self.message_context = {}
         self.message_context = self.get_message_context()
 
     def is_current_language_supported(self):
@@ -394,15 +404,28 @@ class MycroftSkill(object):
                                      intent handler the function will need the self
                                      variable passed as well.
               """
+
         def wrapper(message):
             try:
-                self.emitter.emit(Message("intent.execution.start",
-                                          {"status": "start", "intent": name}))
+                # Indicate that the skill handler is starting
+                name = get_handler_name(handler)
+                self.emitter.emit(Message("mycroft.skill.handler.start",
+                                          data={'handler': name}))
                 if need_self:
                     # When registring from decorator self is required
-                    handler(self, message)
+                    if len(getargspec(handler).args) == 2:
+                        handler(self, message)
+                    elif len(getargspec(handler).args) == 1:
+                        handler(self)
+                    else:
+                        raise TypeError
                 else:
-                    handler(message)
+                    if len(getargspec(handler).args) == 2:
+                        handler(message)
+                    elif len(getargspec(handler).args) == 1:
+                        handler()
+                    else:
+                        raise TypeError
                 self.settings.store()  # Store settings if they've changed
             except Exception as e:
                 # TODO: Localize
@@ -412,12 +435,13 @@ class MycroftSkill(object):
                 logger.error(
                     "An error occurred while processing a request in " +
                     self.name, exc_info=True)
-                self.emitter.emit(Message("intent.execution.error",
-                                          {"status": "failed", "intent": name, "exception": str(e)}))
-                return
-            self.emitter.emit(Message("intent.execution.end",
-                                      {"status": "executed", "intent": name}))
-
+                # indicate completion with exception
+                self.emitter.emit(Message('mycroft.skill.handler.complete',
+                                          data={'handler': name,
+                                                'exception': e.message}))
+            # Indicate that the skill handler has completed
+            self.emitter.emit(Message('mycroft.skill.handler.complete',
+                                      data={'handler': name}))
         if handler:
             self.emitter.on(name, self.handle_update_message_context)
             self.emitter.on(name, wrapper)
@@ -473,7 +497,8 @@ class MycroftSkill(object):
             if name == intent_name:
                 logger.debug('Disabling intent ' + intent_name)
                 name = str(self.skill_id) + ':' + intent_name
-                self.emitter.emit(Message("detach_intent", {"intent_name": name}))
+                self.emitter.emit(
+                    Message("detach_intent", {"intent_name": name}))
                 return
 
     def enable_intent(self, intent_name):
@@ -507,7 +532,7 @@ class MycroftSkill(object):
         if not isinstance(word, basestring):
             raise ValueError('word should be a string')
         self.emitter.emit(Message('add_context', {'context': context, 'word':
-                          word}))
+            word}))
 
     def remove_context(self, context):
         """
@@ -534,21 +559,28 @@ class MycroftSkill(object):
 
     def get_message_context(self, message_context=None):
         if message_context is None:
-            message_context = {"destinatary": "all", "source": self.name, "mute": False, "more_speech": False, "target": "all"}
+            message_context = {
+                "destinatary": self.message_context.get("destinatary", "all"),
+                "mute": False, "more_speech": False,
+                "target": self.message_context.get("target", "all")}
         else:
             if "destinatary" not in message_context.keys():
-                message_context["destinatary"] = self.message_context.get("destinatary", "all")
+                message_context["destinatary"] = self.message_context.get(
+                    "destinatary", "all")
             if "target" not in message_context.keys():
-                message_context["target"] = self.message_context.get("target", "all")
+                message_context["target"] = self.message_context.get("target",
+                                                                     "all")
             if "mute" not in message_context.keys():
-                message_context["mute"] = self.message_context.get("mute", False)
+                message_context["mute"] = self.message_context.get("mute",
+                                                                   False)
             if "more_speech" not in message_context.keys():
-                message_context["more_speech"] = self.message_context.get("more_speech", False)
-        if message_context.get("source", "skills") == "skills":
-            message_context["source"] = self.name
+                message_context["more_speech"] = self.message_context.get(
+                    "more_speech", False)
+        message_context["source"] = self.name
         return message_context
 
-    def speak(self, utterance, expect_response=False, metadata=None, message_context=None):
+    def speak(self, utterance, expect_response=False, metadata=None,
+              message_context=None):
         """
                     Speak a sentence.
 
@@ -560,7 +592,7 @@ class MycroftSkill(object):
                 """
         if message_context is None:
             # use current context
-            message_context = {}
+            message_context = self.message_context
         if metadata is None:
             metadata = {}
         # registers the skill as being active
@@ -568,12 +600,14 @@ class MycroftSkill(object):
         data = {'utterance': utterance,
                 'expect_response': expect_response,
                 "metadata": metadata}
-        self.emitter.emit(Message("speak", data, self.get_message_context(message_context)))
+        self.emitter.emit(
+            Message("speak", data, self.get_message_context(message_context)))
         self.set_context('Last_Speech', utterance)
         for field in metadata:
-            self.set_context(field, metadata[field])
+            self.set_context(field, str(metadata[field]))
 
-    def speak_dialog(self, key, data=None, expect_response=False, metadata=None, message_context=None):
+    def speak_dialog(self, key, data=None, expect_response=False,
+                     metadata=None, message_context=None):
         """
                    Speak sentance based of dialog file.
 
@@ -595,7 +629,8 @@ class MycroftSkill(object):
         if os.path.exists(dialog_dir):
             self.dialog_renderer = DialogLoader().load(dialog_dir)
         else:
-            logger.debug('No dialog loaded, ' + dialog_dir + ' does not exist')
+            logger.debug(
+                'No dialog loaded, ' + dialog_dir + ' does not exist')
 
     def load_data_files(self, root_directory):
         self.init_dialog(root_directory)
@@ -664,6 +699,80 @@ class MycroftSkill(object):
             logger.error("Failed to stop skill: {}".format(self.name),
                          exc_info=True)
 
+    def _schedule_event(self, handler, when, data=None, name=None,
+                        repeat=None):
+        """
+            Underlying method for schedle_event and schedule_repeating_event.
+            Takes scheduling information and sends it of on the message bus.
+        """
+        data = data or {}
+        if not name:
+            name = self.name + handler.__name__
+        name = str(self.skill_id) + ':' + name
+        self.add_event(name, handler, False)
+        event_data = {}
+        event_data['time'] = time.mktime(when.timetuple())
+        event_data['event'] = name
+        event_data['repeat'] = repeat
+        event_data['data'] = data
+        self.emitter.emit(Message('mycroft.scheduler.schedule_event',
+                                  data=event_data))
+
+    def schedule_event(self, handler, when, data=None, name=None):
+        """
+            Schedule a single event.
+
+            Args:
+                handler:               method to be called
+                when (datetime):       when the handler should be called
+                data (dict, optional): data to send when the handler is called
+                name (str, optional):  friendly name parameter
+        """
+        data = data or {}
+        self._schedule_event(handler, when, data, name)
+
+    def schedule_repeating_event(self, handler, when, frequency,
+                                 data=None, name=None):
+        """
+            Schedule a repeating event.
+
+            Args:
+                handler:                method to be called
+                when (datetime):        time for calling the handler
+                frequency (float/int):  time in seconds between calls
+                data (dict, optional):  data to send along to the handler
+                name (str, optional):   friendly name parameter
+        """
+        data = data or {}
+        self._schedule_event(handler, when, data, name, frequency)
+
+    def update_event(self, name, data=None):
+        """
+            Change data of event.
+
+            Args:
+                name (str):   Name of event
+        """
+        data = data or {}
+        data = {
+            'event': name,
+            'data': data
+        }
+        self.emitter.emit(Message('mycroft.schedule.update_event',
+                                  data=data))
+
+    def cancel_event(self, name):
+        """
+            Cancel a pending event. The event will no longer be scheduled
+            to be executed
+
+            Args:
+                name (str):   Name of event
+        """
+        data = {'event': name}
+        self.emitter.emit(Message('mycroft.scheduler.remove_event',
+                                  data=data))
+
 
 class FallbackSkill(MycroftSkill):
     """
@@ -685,64 +794,79 @@ class FallbackSkill(MycroftSkill):
 
     @classmethod
     def make_intent_failure_handler(cls, ws):
-        """Goes through all fallback handlers until one returns true"""
+        """Goes through all fallback handlers until one returns True"""
+
+        def ordered_handler(message):
+            logger.info("Overriding fallback order")
+            logger.info("Fallback order " + str(cls.order))
+            missing_folders = cls.folders.keys()
+            logger.info("Fallbacks " + str(missing_folders))
+
+            # try fallbacks in ordered list
+            for folder in cls.order:
+                for f in cls.folders.keys():
+                    logger.info(folder + " " + f)
+                    if folder == f:
+                        if f in missing_folders:
+                            missing_folders.remove(f)
+                        logger.info("Trying ordered fallback: " + folder)
+                        handler = cls.folders[f]
+                        try:
+                            handler.__self__.handle_update_message_context(
+                                message)
+                            if handler(message):
+                                return True
+                        except Exception as e:
+                            logger.info(
+                                'Exception in fallback: ' +
+                                handler.__self__.name + " " +
+                                str(e))
+
+            # try fallbacks missing from ordered list
+            logger.info("Missing fallbacks " + str(missing_folders))
+            for folder in missing_folders:
+                logger.info("fallback not in ordered list, trying it now: " +
+                            folder)
+                handler = cls.folders[folder]
+                try:
+                    handler.__self__.handle_update_message_context(
+                        message)
+                    if handler(message):
+                        return True
+                except Exception as e:
+                    logger.info('Exception in fallback: ' +
+                                handler.__self__.name + " " +
+                                str(e))
+            return False
+
+        def priority_handler(message):
+            # try fallbacks by priority
+            for _, handler in sorted(cls.fallback_handlers.items(),
+                                     key=operator.itemgetter(0)):
+                try:
+                    handler.__self__.handle_update_message_context(
+                        message)
+                    if handler(message):
+                        return True
+                except Exception as e:
+                    logger.info('Exception in fallback: ' +
+                                handler.__self__.name + " " +
+                                str(e))
+            return False
+
         def handler(message):
             if cls.override:
-                try:
-                    # try fallbacks by pre defined order
-                    logger.info("Overriding fallback order")
-                    logger.info("Fallback order " + str(cls.order))
-                    missing_folders = cls.folders.keys()
-                    logger.info("Fallbacks " + str(missing_folders))
-                    for folder in cls.order:
-                        for f in cls.folders.keys():
-                            if folder == f:
-                                if f in missing_folders:
-                                    missing_folders.remove(f)
-                                logger.info("Trying ordered fallback: " + folder)
-                                handler, context_update_handler =cls.folders[f]
-                                try:
-                                    context_update_handler(message)
-                                    if handler(message):
-                                        return
-                                except Exception as e:
-                                    logger.info('Exception in fallback: ' + cls.name + " " +
-                                                str(e))
-                    logger.info("Missing fallbacks " + str(missing_folders))
-                    for folder in missing_folders:
-                        logger.info("fallback not in ordered list, trying it now: " +
-                                    folder)
-                        handler, context_update_handler = cls.folders[folder]
-                        try:
-                            context_update_handler(message)
-                            if handler(message):
-                                return
-                        except Exception as e:
-                            logger.info('Exception in fallback: ' + cls.name + " " +
-                                        str(e))
-                except Exception as e:
-                    logger.error(e)
-                    logger.warning("Fallback override is not working")
+                success = ordered_handler(message)
             else:
-                # try fallbacks by priority
-                for _, handler, context_update_handler in sorted(
-                        cls.fallback_handlers.items(),
-                                         key=operator.itemgetter(0)):
-                    try:
-                        context_update_handler(message)
-                        if handler(message):
-                            return
-                    except Exception as e:
-                        logger.info('Exception in fallback: ' + cls.name + " " +
-                                    str(e))
-            ws.emit(Message('complete_intent_failure'))
-            logger.warn('No fallback could handle intent.')
+                success = priority_handler(message)
+            if not success:
+                ws.emit(Message('complete_intent_failure'))
+                logger.warn('No fallback could handle intent.')
 
         return handler
 
     @classmethod
-    def _register_fallback(cls, handler, priority, skill_folder=None,
-                           context_update_handler=None):
+    def _register_fallback(cls, handler, priority, skill_folder=None):
         """
         Register a function to be called as a general info fallback
         Fallback should receive message and return
@@ -754,12 +878,12 @@ class FallbackSkill(MycroftSkill):
         while priority in cls.fallback_handlers:
             priority += 1
 
-        cls.fallback_handlers[priority] = handler, context_update_handler
+        cls.fallback_handlers[priority] = handler
 
-       # folder name
+        # folder name
         if skill_folder:
             skill_folder = skill_folder.split("/")[-1]
-            cls.folders[skill_folder] = handler, context_update_handler
+            cls.folders[skill_folder] = handler
         else:
             logger.warning("skill folder error registering fallback")
 
@@ -774,9 +898,7 @@ class FallbackSkill(MycroftSkill):
             skill_folder = self._dir
         except:
             skill_folder = dirname(__file__)  # skill
-        context_update_handler = self.handle_update_message_context
-        self._register_fallback(handler, priority, skill_folder,
-                                context_update_handler)
+        self._register_fallback(handler, priority, skill_folder)
 
     @classmethod
     def remove_fallback(cls, handler_to_del):
@@ -786,22 +908,21 @@ class FallbackSkill(MycroftSkill):
             Args:
                 handler_to_del: reference to handler
         """
-        flag1 = False
+        success = False
         for priority, handler in cls.fallback_handlers.items():
             if handler == handler_to_del:
                 del cls.fallback_handlers[priority]
-                flag1 = True
+                success = True
+        if not success:
+            logger.warn('Could not remove fallback!')
 
-        flag2 = False
+        success = False
         for folder in cls.folders.keys():
             handler = cls.folders[folder]
             if handler == handler_to_del:
                 del cls.folders[folder]
-                flag2 = True
-
-        if not flag1:
-            logger.warn('Could not remove fallback!')
-        if not flag2:
+                success = True
+        if not success:
             logger.warn('Could not remove ordered fallback!')
 
     def remove_instance_handlers(self):

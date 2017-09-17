@@ -15,29 +15,13 @@
 # You should have received a copy of the GNU General Public License
 # along with Mycroft Core.  If not, see <http://www.gnu.org/licenses/>.
 
-
-from jarbas_utils.skill_tools import QueryBackend
+from jarbas_utils.skill_tools import ServerFallbackQuery
 from mycroft.skills.core import FallbackSkill
 from mycroft.util.log import getLogger
 
 __author__ = 'jarbas'
 
 LOGGER = getLogger(__name__)
-
-
-class ServerFallbackQuery(QueryBackend):
-    def __init__(self, emitter=None, timeout=30, waiting_messages=[
-        "server.message.received"],logger=None):
-        super(ServerFallbackQuery, self).__init__(name="ServerFallbackService",
-                                                  emitter=emitter, timeout=timeout,
-                                                  waiting_messages=waiting_messages, logger=logger)
-
-    def wait_server_response(self, data = None):
-        if data is None:
-            data = {}
-        self.send_request(message_type="server.intent_failure",
-                          message_data=data)
-        return self.wait("server.message.received")
 
 
 class ServerFallback(FallbackSkill):
@@ -47,10 +31,10 @@ class ServerFallback(FallbackSkill):
 
     def initialize(self):
         self.register_fallback(self.handle_fallback, 50)
-        self.server = ServerFallbackQuery(self.emitter)
+        self.server = ServerFallbackQuery(self.name, self.emitter)
 
     def handle_fallback(self, message):
-        return self.server.get_padatious_response(message.data)
+        return self.server.wait_server_response(message.data, message.context)
 
     def stop(self):
         pass

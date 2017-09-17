@@ -99,7 +99,8 @@ class MyServerFactory(WebSocketServerFactory):
         self.create_internal_emitter()
         # mycroft utils
         self.parser = IntentParser(self.emitter)
-        self.user_manager = UserManagerQuery(self.emitter)
+        self.user_manager = UserManagerQuery(name="server_ClientManager",
+                                             emitter=self.emitter)
 
         # messages to send queue
         self.message_queue = []
@@ -373,7 +374,7 @@ class MyServerFactory(WebSocketServerFactory):
             # authorize user message_type
             # get user from sock
             user_data = self.user_manager.user_from_sock(sock_num)
-
+            logger.debug("user data: " + str(user_data))
             # see if this user can perform this action
             if deserialized_message.type in user_data.get("forbidden_messages", []):
                 logger.warning("This user is not allowed to perform this action " + str(sock_num))
@@ -398,6 +399,7 @@ class MyServerFactory(WebSocketServerFactory):
                     if field in deserialized_message.data.keys():
                         deserialized_message.data[field] = self.clients[
                             client.peer]["file_path"]
+
             # pre-process message type
             if deserialized_message.type == "recognizer_loop:utterance":
                 utterance = data["utterances"][0]

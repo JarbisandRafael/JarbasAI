@@ -63,15 +63,21 @@ class ContextManager(object):
             metadata(object): dict, arbitrary metadata about the entity being
             added
         """
-        top_frame = self.frame_stack[0] if len(self.frame_stack) > 0 else None
-        if top_frame and top_frame[0].metadata_matches(metadata):
-            top_frame[0].merge_context(entity, metadata)
-        else:
-            frame = ContextManagerFrame(entities=[entity],
-                                        metadata=metadata.copy())
-            self.frame_stack.insert(0, (frame, time.time()))
+        try:
+            if len(self.frame_stack) > 0:
+                top_frame = self.frame_stack[0]
+            else:
+                top_frame = None
+            if top_frame and top_frame[0].metadata_matches(metadata):
+                top_frame[0].merge_context(entity, metadata)
+            else:
+                frame = ContextManagerFrame(entities=[entity],
+                                            metadata=metadata.copy())
+                self.frame_stack.insert(0, (frame, time.time()))
+        except (IndexError, KeyError):
+            pass
 
-    def get_context(self, max_frames=None, missing_entities=[]):
+    def get_context(self, max_frames=None, missing_entities=None):
         """
         Constructs a list of entities from the context.
 
@@ -83,6 +89,8 @@ class ContextManager(object):
         Returns:
             list: a list of entities
         """
+        missing_entities = missing_entities or []
+
         relevant_frames = [frame[0] for frame in self.frame_stack if
                            time.time() - frame[1] < self.timeout]
         if not max_frames or max_frames > len(relevant_frames):
@@ -150,14 +158,6 @@ class IntentService(object):
         self.emitter.on('add_context', self.handle_add_context)
         self.emitter.on('remove_context', self.handle_remove_context)
         self.emitter.on('clear_context', self.handle_clear_context)
-
-    def update_context(self, intent):
-        for tag in intent['__tags__']:
-            context_entity = tag.get('entities')[0]
-            if self.context_greedy:
-                self.context_manager.inject_context(context_entity)
-            elif context_entity['data'][0][1] in self.context_keywords:
-                self.context_manager.inject_context(context_entity)
 
     def do_conversation(self, utterances, skill_id, lang):
         self.emitter.emit(Message("skill.converse.request", {
@@ -275,7 +275,6 @@ class IntentService(object):
         lang = message.data.get('lang', None)
         if not lang:
             lang = "en-us"
-
         utterances = message.data.get('utterances', '')
         context = self.get_message_context(message.context)
         # check for conversation time-out
@@ -356,19 +355,37 @@ class IntentService(object):
         self.engine.intent_parsers = new_parsers
 
     def handle_add_context(self, message):
+        """
+            Handles adding context from the message bus.
+            The data field must contain a context keyword and
+            may contain a word if a specific word should be injected
+            as a match for the provided context keyword.
+
+        """
         entity = {'confidence': 1.0}
         context = message.data.get('context')
         word = message.data.get('word') or ''
+        # if not a string type try creating a string from it
+        if not isinstance(word, basestring):
+            word = str(word)
         entity['data'] = [(word, context)]
         entity['match'] = word
         entity['key'] = word
         self.context_manager.inject_context(entity)
 
     def handle_remove_context(self, message):
+        """
+            Handles removing context from the message bus. The
+            data field must contain the 'context' to remove.
+        """
         context = message.data.get('context')
-        self.context_manager.remove_context(context)
+        if context:
+            self.context_manager.remove_context(context)
 
     def handle_clear_context(self, message):
+        """
+            Clears all keywords from context.
+        """
         self.context_manager.clear_context()
 
 
